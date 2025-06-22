@@ -1,0 +1,11 @@
+services:
+  tika:
+    image: apache/tika:2.9.1.0
+    container_name: tika-server
+    ports:
+      - "9998:9998"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9998/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

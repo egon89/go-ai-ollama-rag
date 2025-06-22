@@ -1,0 +1,184 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/tmc/langchaingo/llms/ollama"
+)
+
+var embeddingPath = "./embeddings"
+
+type document struct {
+	ID        string    `json:"id"`
+	FileName  string    `json:"fileName"`
+	Text      string    `json:"text"`
+	Embedding []float32 `json:"embedding"`
+}
+
+func main() {
+	file := "/home/everton/Documents/mcp-context/685684587-Saga-Knight-Level-8-Ao-80-Tibia-Life.pdf"
+	fileName := filepath.Base(file)
+
+	rawText, err := extractRawText(file)
+	if err != nil {
+		log.Fatalf("Error extracting raw text: %v", err)
+	}
+
+	chunks := ChunkText(rawText, 1000)
+	fmt.Println("--------------------------------------------------")
+	fmt.Println("Text Chunks:")
+	for i, chunk := range chunks {
+		fmt.Println("--------------------------------------------------")
+		fmt.Printf("Chunk %d: %s\n", i+1, chunk)
+	}
+
+	err = createEmbeddings(fileName, chunks)
+	if err != nil {
+		log.Fatalf("Error creating embeddings: %v", err)
+	}
+}
+
+func extractRawText(filePath string) (string, error) {
+	file, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest("PUT", "http://localhost:9998/tika", bytes.NewReader(file))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Accept", "text/plain") // <- ensures plain text response
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected response code: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return RemoveInvalidUTF8(RemovePUA(string(body))), nil
+}
+
+func RemoveInvalidUTF8(s string) string {
+	valid := make([]rune, 0, len(s))
+	for len(s) > 0 {
+		r, size := utf8.DecodeRuneInString(s)
+		if r == utf8.RuneError && size == 1 {
+			// Skip invalid rune
+			s = s[size:]
+			continue
+		}
+		valid = append(valid, r)
+		s = s[size:]
+	}
+	return string(valid)
+}
+
+func RemovePUA(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if isPUA(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func isPUA(r rune) bool {
+	return (r >= 0xE000 && r <= 0xF8FF) ||
+		(r >= 0xF0000 && r <= 0xFFFFD) ||
+		(r >= 0x100000 && r <= 0x10FFFD)
+}
+
+func ChunkText(text string, chunkSize int) []string {
+	var chunks []string
+	for i := 0; i < len(text); i += chunkSize {
+		end := i + chunkSize
+		if end > len(text) {
+			end = len(text)
+		}
+		chunks = append(chunks, text[i:end])
+	}
+	return chunks
+}
+
+func createEmbeddings(fileName string, texts []string) error {
+	embeddingFile := fmt.Sprintf("%s/%s.embeddings", embeddingPath, fileName)
+
+	if _, err := os.Stat(embeddingFile); err == nil {
+		fmt.Printf("Embedding path %s already exists, skipping creation.\n", embeddingFile)
+		return nil
+	}
+
+	llm, err := ollama.New(
+		ollama.WithModel("nomic-embed-text"),
+		ollama.WithServerURL("http://localhost:11434"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create LLM client: %w", err)
+	}
+
+	file, err := os.Create(embeddingFile)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer file.Close()
+
+	for i, text := range texts {
+		embedding, err := llm.CreateEmbedding(context.Background(), []string{text})
+		if err != nil {
+			return fmt.Errorf("failed to create embedding for text chunk %d: %w", i, err)
+		}
+		fmt.Printf("Embedding for chunk %d: %v\n", i, embedding)
+
+		doc := document{
+			ID:        fmt.Sprintf("doc-%d", i),
+			FileName:  fileName,
+			Text:      text,
+			Embedding: embedding[0],
+		}
+
+		data, err := json.Marshal(doc)
+		if err != nil {
+			return fmt.Errorf("failed to marshal document: %w", err)
+		}
+
+		if _, err := file.Write(data); err != nil {
+			return fmt.Errorf("failed to write document to file: %w", err)
+		}
+
+		if _, err := file.WriteString("\n"); err != nil {
+			return fmt.Errorf("failed to write newline to file: %w", err)
+		}
+
+		fmt.Printf("Successfully processed chunk %d\n", i)
+	}
+
+	log.Printf("Embeddings saved to %s", embeddingFile)
+
+	return nil
+}
