@@ -33,7 +33,7 @@ type document struct {
 }
 
 func main() {
-	file := "/home/everton/Documents/mcp-context/685684587-Saga-Knight-Level-8-Ao-80-Tibia-Life.pdf"
+	file := "./documents/685684587-Saga-Knight-Level-8-Ao-80-Tibia-Life.pdf"
 	fileName := filepath.Base(file)
 
 	rawText, err := extractRawText(file)
@@ -285,8 +285,6 @@ func insertEmbeddings(ctx context.Context, collection *mongo.Collection) error {
 		if _, err := collection.InsertOne(ctx, d); err != nil {
 			return fmt.Errorf("insert: %w", err)
 		}
-
-		fmt.Printf("document %s inserted\n", d.ID)
 	}
 
 	return nil
