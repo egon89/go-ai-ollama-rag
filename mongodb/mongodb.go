@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -12,12 +13,10 @@ import (
 )
 
 func Connect(ctx context.Context, host string, userName string, password string) (*mongo.Client, error) {
-	fmt.Printf("...connecting 2, %s, %s, %s\n", userName, password, host)
+	log.Printf("...connecting to mongo in %s\n", host)
 
-	// Build the MongoDB URI
 	uri := fmt.Sprintf("mongodb://%s:%s@%s/?authSource=admin&directConnection=true", userName, password, host)
 
-	// Apply full URI
 	opts := options.Client().ApplyURI(uri)
 
 	client, err := mongo.Connect(ctx, opts)
@@ -25,13 +24,13 @@ func Connect(ctx context.Context, host string, userName string, password string)
 		return nil, fmt.Errorf("connect: %w", err)
 	}
 
-	fmt.Println("...ping")
+	log.Println("...database ping")
 
 	if err := client.Ping(ctx, readpref.Primary()); err != nil {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 
-	fmt.Println("connected!")
+	log.Println("connected!")
 
 	return client, nil
 }
@@ -50,7 +49,7 @@ func CreateCollection(ctx context.Context, db *mongo.Database, collectionName st
 		}
 	}
 
-	fmt.Printf("using collection %s\n", collectionName)
+	log.Printf("using collection %s\n", collectionName)
 
 	return db.Collection(collectionName), nil
 }

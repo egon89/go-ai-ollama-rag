@@ -24,6 +24,7 @@ import (
 )
 
 var embeddingPath = "./embeddings"
+var printChunks = false
 
 type document struct {
 	ID        string    `json:"id"`
@@ -33,7 +34,7 @@ type document struct {
 }
 
 func main() {
-	file := "./documents/685684587-Saga-Knight-Level-8-Ao-80-Tibia-Life.pdf"
+	file := "./documents/Saga-Knight-Level-8-Ao-80-Tibia-Life.pdf"
 	fileName := filepath.Base(file)
 
 	rawText, err := extractRawText(file)
@@ -42,11 +43,14 @@ func main() {
 	}
 
 	chunks := ChunkText(rawText, 1000)
-	fmt.Println("--------------------------------------------------")
-	fmt.Println("Text Chunks:")
-	for i, chunk := range chunks {
+	log.Printf("Total chunks: %d\n", len(chunks))
+	if printChunks {
 		fmt.Println("--------------------------------------------------")
-		fmt.Printf("Chunk %d: %s\n", i+1, chunk)
+		fmt.Println("Text Chunks:")
+		for i, chunk := range chunks {
+			fmt.Println("--------------------------------------------------")
+			fmt.Printf("Chunk %d: %s\n", i+1, chunk)
+		}
 	}
 
 	err = createEmbeddings(fileName, chunks)
@@ -171,7 +175,6 @@ func createEmbeddings(fileName string, texts []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create embedding for text chunk %d: %w", i, err)
 		}
-		fmt.Printf("Embedding for chunk %d: %v\n", i, embedding)
 
 		doc := document{
 			ID:        fmt.Sprintf("doc-%d", i),
@@ -193,9 +196,12 @@ func createEmbeddings(fileName string, texts []string) error {
 			return fmt.Errorf("failed to write newline to file: %w", err)
 		}
 
-		fmt.Printf("Successfully processed chunk %d\n", i)
+		fmt.Print("\033[u\033[K")
+		fmt.Printf("Successfully processed chunk %d", i)
+
 	}
 
+	fmt.Println()
 	log.Printf("Embeddings saved to %s", embeddingFile)
 
 	return nil
@@ -218,7 +224,7 @@ func setupDatabase(ctx context.Context) (*mongo.Collection, error) {
 		return nil, fmt.Errorf("createCollection: %w", err)
 	}
 
-	fmt.Println("Created Collection")
+	log.Println("Created Collection")
 
 	const indexName = "vector_index"
 	settings := mongodb.VectorIndexSettings{
@@ -232,7 +238,7 @@ func setupDatabase(ctx context.Context) (*mongo.Collection, error) {
 		return nil, fmt.Errorf("createVectorIndex: %w", err)
 	}
 
-	fmt.Println("Created Vector Index")
+	log.Println("Created Vector Index")
 
 	unique := true
 	indexModel := mongo.IndexModel{
@@ -243,19 +249,22 @@ func setupDatabase(ctx context.Context) (*mongo.Collection, error) {
 	// Create a unique index for the document.
 	collection.Indexes().CreateOne(ctx, indexModel)
 
-	fmt.Println("Created Unique Index")
+	log.Println("Created Unique Index")
 
 	return collection, nil
 }
 
 func insertEmbeddings(ctx context.Context, collection *mongo.Collection) error {
-	input, err := os.Open("embeddings/685684587-Saga-Knight-Level-8-Ao-80-Tibia-Life.pdf.embeddings")
+	input, err := os.Open("./embeddings/Saga-Knight-Level-8-Ao-80-Tibia-Life.pdf.embeddings")
 	if err != nil {
 		return fmt.Errorf("open file: %w", err)
 	}
 	defer input.Close()
 
 	var counter int
+
+	fmt.Print("\n")
+	fmt.Print("\033[s")
 
 	scanner := bufio.NewScanner(input)
 	for scanner.Scan() {
@@ -265,7 +274,7 @@ func insertEmbeddings(ctx context.Context, collection *mongo.Collection) error {
 		doc := scanner.Text()
 
 		fmt.Print("\033[u\033[K")
-		fmt.Printf("Insering Data: %d\n", counter)
+		fmt.Printf("Insering Data: %d", counter)
 
 		var d document
 		if err := json.Unmarshal([]byte(doc), &d); err != nil {

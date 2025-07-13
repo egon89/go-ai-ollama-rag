@@ -22,5 +22,5 @@ docker compose up -d
 
 Put a file in the `documents` folder, then run:
 ```bash
-go run main.go
+go run cmd/context/main.go
 ```
