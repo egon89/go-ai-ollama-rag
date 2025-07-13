@@ -228,7 +228,7 @@ func setupDatabase(ctx context.Context) (*mongo.Collection, error) {
 
 	const indexName = "vector_index"
 	settings := mongodb.VectorIndexSettings{
-		NumDimensions: 1024,
+		NumDimensions: 768, // 1024
 		Path:          "embedding",
 		Similarity:    "cosine",
 	}
