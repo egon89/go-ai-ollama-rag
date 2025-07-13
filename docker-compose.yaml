@@ -9,3 +9,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  mongo-db:
+    image: mongodb/mongodb-atlas-local:latest
+    container_name: mongo-atlas
+    # privileged: true
+    ports:
+      - "27017:27017"
+    environment:
+      MONGODB_INITDB_ROOT_USERNAME: root
+      MONGODB_INITDB_ROOT_PASSWORD: root
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:

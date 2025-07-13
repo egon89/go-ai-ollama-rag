@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,7 +16,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/egon89/go-ai-ollama-rag/mongodb"
 	"github.com/tmc/langchaingo/llms/ollama"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 var embeddingPath = "./embeddings"
@@ -46,6 +52,18 @@ func main() {
 	err = createEmbeddings(fileName, chunks)
 	if err != nil {
 		log.Fatalf("Error creating embeddings: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	collection, err := setupDatabase(ctx)
+	if err != nil {
+		log.Fatalf("Error setup database: %v", err)
+	}
+
+	if err := insertEmbeddings(ctx, collection); err != nil {
+		log.Fatalf("insert embedding error: %v", err)
 	}
 }
 
@@ -179,6 +197,97 @@ func createEmbeddings(fileName string, texts []string) error {
 	}
 
 	log.Printf("Embeddings saved to %s", embeddingFile)
+
+	return nil
+}
+
+func setupDatabase(ctx context.Context) (*mongo.Collection, error) {
+	client, err := mongodb.Connect(ctx, "localhost:27017", "root", "root")
+	if err != nil {
+		return nil, fmt.Errorf("connectToMongo: %w", err)
+	}
+
+	const dbName = "go-ai-rag"
+	const collectionName = "context"
+
+	db := client.Database(dbName)
+
+	// Create database and collection.
+	collection, err := mongodb.CreateCollection(ctx, db, collectionName)
+	if err != nil {
+		return nil, fmt.Errorf("createCollection: %w", err)
+	}
+
+	fmt.Println("Created Collection")
+
+	const indexName = "vector_index"
+	settings := mongodb.VectorIndexSettings{
+		NumDimensions: 1024,
+		Path:          "embedding",
+		Similarity:    "cosine",
+	}
+
+	// Create vector index.
+	if err := mongodb.CreateVectorIndex(ctx, collection, indexName, settings); err != nil {
+		return nil, fmt.Errorf("createVectorIndex: %w", err)
+	}
+
+	fmt.Println("Created Vector Index")
+
+	unique := true
+	indexModel := mongo.IndexModel{
+		Keys:    bson.D{{Key: "id", Value: 1}},
+		Options: &options.IndexOptions{Unique: &unique},
+	}
+
+	// Create a unique index for the document.
+	collection.Indexes().CreateOne(ctx, indexModel)
+
+	fmt.Println("Created Unique Index")
+
+	return collection, nil
+}
+
+func insertEmbeddings(ctx context.Context, collection *mongo.Collection) error {
+	input, err := os.Open("embeddings/685684587-Saga-Knight-Level-8-Ao-80-Tibia-Life.pdf.embeddings")
+	if err != nil {
+		return fmt.Errorf("open file: %w", err)
+	}
+	defer input.Close()
+
+	var counter int
+
+	scanner := bufio.NewScanner(input)
+	for scanner.Scan() {
+		counter++
+
+		// get document from the file
+		doc := scanner.Text()
+
+		fmt.Print("\033[u\033[K")
+		fmt.Printf("Insering Data: %d\n", counter)
+
+		var d document
+		if err := json.Unmarshal([]byte(doc), &d); err != nil {
+			return fmt.Errorf("unmarshal: %w", err)
+		}
+
+		// check if the document is already in the database
+		res := collection.FindOne(ctx, bson.D{{Key: "id", Value: d.ID}})
+		if res.Err() == nil {
+			continue
+		}
+
+		if !errors.Is(res.Err(), mongo.ErrNoDocuments) {
+			return fmt.Errorf("another error: %w", err)
+		}
+
+		if _, err := collection.InsertOne(ctx, d); err != nil {
+			return fmt.Errorf("insert: %w", err)
+		}
+
+		fmt.Printf("document %s inserted\n", d.ID)
+	}
 
 	return nil
 }
